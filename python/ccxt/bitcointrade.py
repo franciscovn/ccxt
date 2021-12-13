@@ -124,6 +124,10 @@ class bitcointrade(Exchange):
             market = results[i]
             id = self.safe_string(market, 'pair')
             symbol = self.safe_string(market, 'pair')
+            baseId = self.safe_string(market, 'base')
+            quoteId = self.safe_string(market, 'quote')
+            base = self.safe_currency_code(baseId)
+            quote = self.safe_currency_code(quoteId)
             precision = {
                 'amount': self.safe_number(market, 'min_amount'),
                 'price': self.safe_number(market, 'price_tick'),
@@ -148,6 +152,10 @@ class bitcointrade(Exchange):
             result.append({
                 'id': id,
                 'symbol': symbol,
+                'base': base,
+                'quote': quote,
+                'baseId': baseId,
+                'quoteId': quoteId,
                 'type': 'spot',
                 'spot': True,
                 'active': active,
@@ -218,59 +226,57 @@ class bitcointrade(Exchange):
             'pair': market['id'],
         }
         response = self.publicGetRatePair(self.extend(request, params))
-        #
-        #     {
-        #         "pair":"BTC_USDC",
-        #         "last_price":"10850.02",
-        #         "low":"10720.03",
-        #         "high":"10909.99",
-        #         "variation":"1.21",
-        #         "volume":"0.83868",
-        #         "base":"BTC",
-        #         "base_name":"Bitcoin",
-        #         "quote":"USDC",
-        #         "quote_name":"USD Coin",
-        #         "bid":"10811.00",
-        #         "ask":"10720.03",
-        #         "avg":"10851.47",
-        #         "ask_volume":"0.00140",
-        #         "bid_volume":"0.00185",
-        #         "created_at":"2020-09-28 21:44:51.228920+00:00"
-        #     }
-        #
+        """
+        {
+          "message": null,
+          "data": {
+            "high": 15999.12,
+            "low": 15000.12,
+            "volume": 123.12345678,
+            "trades_quantity": 123,
+            "last": 15500.12,
+            "buy": 15400.12,
+            "sell": 15600.12,
+            "date": "2017-10-20T00:00:00Z"
+          }
+        }
+        """
+        self.load_markets()
+        market = self.market(symbol)
+        request = {
+            'coin': market['base'],
+        }
+        response = self.publicGetCoinTicker(self.extend(request, params))
+        ticker = self.safe_value(response, 'ticker', {})
+        timestamp = self.parse_date(
+            self.safe_string(trade, 'date')
+        )
+        last = self.safe_number(ticker, 'last')
+        return {
+            'symbol': symbol,
+            'timestamp': timestamp,
+            'datetime': self.iso8601(timestamp),
+            'high': self.safe_number(ticker, 'high'),
+            'low': self.safe_number(ticker, 'low'),
+            'bid': self.safe_number(ticker, 'buy'),
+            'bidVolume': None,
+            'ask': self.safe_number(ticker, 'sell'),
+            'askVolume': None,
+            'vwap': None,
+            'open': None,
+            'close': last,
+            'last': last,
+            'previousClose': None,
+            'change': None,
+            'percentage': None,
+            'average': None,
+            'baseVolume': self.safe_number(ticker, 'volume'),
+            'quoteVolume': None,
+            'info': ticker,
+        }
+
         return self.parse_ticker(response, market)
 
-    def fetch_tickers(self, symbols=None, params={}):
-        self.load_markets()
-        response = self.publicGetRateAll(params)
-        #
-        #     [
-        #         {
-        #             "pair":"BTC_USDC",
-        #             "last_price":"10850.02",
-        #             "low":"10720.03",
-        #             "high":"10909.99",
-        #             "variation":"1.21",
-        #             "volume":"0.83868",
-        #             "base":"BTC",
-        #             "base_name":"Bitcoin",
-        #             "quote":"USDC",
-        #             "quote_name":"USD Coin",
-        #             "bid":"10811.00",
-        #             "ask":"10720.03",
-        #             "avg":"10851.47",
-        #             "ask_volume":"0.00140",
-        #             "bid_volume":"0.00185",
-        #             "created_at":"2020-09-28 21:44:51.228920+00:00"
-        #         }
-        #     ]
-        #
-        result = {}
-        for i in range(0, len(response)):
-            ticker = self.parse_ticker(response[i])
-            symbol = ticker['symbol']
-            result[symbol] = ticker
-        return self.filter_by_array(result, 'symbol', symbols)
 
     def fetch_order_book(self, symbol, limit=None, params={}):
         self.load_markets()
