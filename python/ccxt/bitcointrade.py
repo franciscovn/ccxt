@@ -70,11 +70,11 @@ class bitcointrade(Exchange):
                         'market/summary/',
                         'market/estimated_price/',
                         'market/user_orders/list/',
-                        'market/user_orders/{code}/'
+                        'market/user_orders/{code}/',
+                        'wallets/balance/'
                     ],
                     'post': [
                         'market/create_order/',
-                        'order/{pair}/{order_id}/cancel/',
                     ],
                     'delete': [
                         'market/user_orders/'
@@ -168,64 +168,7 @@ class bitcointrade(Exchange):
         return result
 
 
-    def parse_ticker(self, ticker, market=None):
-        #
-        # fetchTicker, fetchTickers
-        #
-        #     {
-        #         "pair":"BTC_USDC",
-        #         "last_price":"10850.02",
-        #         "low":"10720.03",
-        #         "high":"10909.99",
-        #         "variation":"1.21",
-        #         "volume":"0.83868",
-        #         "base":"BTC",
-        #         "base_name":"Bitcoin",
-        #         "quote":"USDC",
-        #         "quote_name":"USD Coin",
-        #         "bid":"10811.00",
-        #         "ask":"10720.03",
-        #         "avg":"10851.47",
-        #         "ask_volume":"0.00140",
-        #         "bid_volume":"0.00185",
-        #         "created_at":"2020-09-28 21:44:51.228920+00:00"
-        #     }
-        #
-        timestamp = self.parse8601(self.safe_string(ticker, 'created_at'))
-        marketId = self.safe_string(ticker, 'pair')
-        symbol = self.safe_symbol(marketId, market)
-        last = self.safe_number(ticker, 'last_price')
-        average = self.safe_number(ticker, 'avg')
-        return {
-            'symbol': symbol,
-            'timestamp': timestamp,
-            'datetime': self.iso8601(timestamp),
-            'high': self.safe_number(ticker, 'high'),
-            'low': self.safe_number(ticker, 'low'),
-            'bid': self.safe_number(ticker, 'bid'),
-            'bidVolume': self.safe_number(ticker, 'bid_volume'),
-            'ask': self.safe_number(ticker, 'ask'),
-            'askVolume': self.safe_number(ticker, 'ask_volume'),
-            'vwap': None,
-            'open': None,
-            'close': last,
-            'last': last,
-            'previousClose': None,
-            'change': None,
-            'percentage': None,
-            'average': average,
-            'baseVolume': None,
-            'quoteVolume': None,
-            'info': ticker,
-        }
-
     def fetch_ticker(self, symbol, params={}):
-        self.load_markets()
-        market = self.market(symbol)
-        request = {
-            'pair': market['id'],
-        }
-        response = self.publicGetRatePair(self.extend(request, params))
         """
         {
           "message": null,
@@ -241,12 +184,10 @@ class bitcointrade(Exchange):
           }
         }
         """
-        self.load_markets()
-        market = self.market(symbol)
         request = {
-            'coin': market['base'],
+            'pair': symbol,
         }
-        response = self.publicGetCoinTicker(self.extend(request, params))
+        response = self.publicGetPairTicker(self.extend(request, params))
         ticker = self.safe_value(response, 'ticker', {})
         timestamp = self.parse_date(
             self.safe_string(trade, 'date')
@@ -275,13 +216,8 @@ class bitcointrade(Exchange):
             'info': ticker,
         }
 
-        return self.parse_ticker(response, market)
-
 
     def fetch_order_book(self, symbol, limit=None, params={}):
-        self.load_markets()
-        params.update({"pair": symbol})
-        response = self.privateGetMarket(params)
         """
         {
           "data": {
@@ -305,6 +241,8 @@ class bitcointrade(Exchange):
           }
         }
         """
+        params.update({"pair": symbol})
+        response = self.privateGetMarket(params)
         orderbook = self.parse_order_book(
             response["data"], symbol, None, 'buying', 'selling', 'unit_price', 'amount'
         )
@@ -343,7 +281,6 @@ class bitcointrade(Exchange):
         }
 
     def fetch_trades(self, symbol, since=None, limit=None, params={}):
-        self.load_markets()
         params.update({"pair": symbol})
         response = self.privateGetMarket(params)
         """
@@ -367,314 +304,257 @@ class bitcointrade(Exchange):
         return self.parse_trades(response, market, since, limit)
 
     def fetch_balance(self, params={}):
-        self.load_markets()
-        response = self.privateGetBalancesExchangeBalances(params)
-        #
-        #     [
-        #         {
-        #             "id":603794,
-        #             "currency":"USD Coin",
-        #             "symbol":"USDC",
-        #             "available":"0",
-        #             "locked":"0",
-        #             "code":"exchange",
-        #             "balance_type":"crypto"
-        #         },
-        #     ]
-        #
+        response = self.privateGetWalletsBalance(params)
+        """
+        {
+          "message": null,
+          "data": [
+            {
+              "address": "3JentmkNdL97VQDtgRMehxPJKS4AveUZJa",
+              "available_amount": 5.23423423,
+              "currency_code": "BTC",
+              "last_update": "2020-10-20T18:39:45.198Z",
+              "locked_amount": 0,
+              "memo": null,
+              "tag": null
+            },
+            {
+              "address": "rfMyfzcavQ4tUe1yJYMS4YPUZhAvcWRbRm",
+              "available_amount": 75.31057927,
+              "currency_code": "XRP",
+              "last_update": "2020-10-20T18:39:45.198Z",
+              "locked_amount": 0,
+              "memo": null,
+              "tag": "0700000000"
+            }
+          ]
+        }
+        """
         result = {'info': response}
         for i in range(0, len(response)):
             balance = response[i]
-            currencyId = self.safe_string(balance, 'symbol')
+            currencyId = self.safe_string(balance, 'currency_code')
             code = self.safe_currency_code(currencyId)
             account = self.account()
-            account['free'] = self.safe_string(balance, 'available')
-            account['used'] = self.safe_string(balance, 'locked')
+            account['free'] = self.safe_string(balance, 'available_amount')
+            account['used'] = self.safe_string(balance, 'locked_amount')
             result[code] = account
         return self.parse_balance(result)
 
     def create_order(self, symbol, type, side, amount, price=None, params={}):
-        self.load_markets()
-        market = self.market(symbol)
-        uppercaseType = type.upper()
-        uppercaseSide = side.upper()
+        lowercase_type = type.lower()
+        lowercase_side = side.lower()
         request = {
-            'pair': market['id'],
-            'order_type': uppercaseType,  # LIMIT, MARKET
-            'side': uppercaseSide,  # BUY or SELL
-            'amount': self.amount_to_precision(symbol, amount),
+            'pair': symbol,
+            'subtype': lowercase_type,  # limited, market
+            'type': lowercase_side,  # buy or sell
+            'amount': self.parse_number(amount),
         }
-        if uppercaseType == 'LIMIT':
-            request['limit_price'] = self.price_to_precision(symbol, price)
-        response = self.privatePostOrderPair(self.extend(request, params))
-        #
-        #     {
-        #         "order_id": "160f523c-f6ef-4cd1-a7c9-1a8ede1468d8",
-        #         "pair": "BTC_ARS",
-        #         "side": "BUY",
-        #         "amount": "0.00400",
-        #         "notional": null,
-        #         "fill_or_kill": False,
-        #         "all_or_none": False,
-        #         "order_type": "LIMIT",
-        #         "status": "OPEN",
-        #         "created_at": 1578413945,
-        #         "filled": "0.00000",
-        #         "limit_price": "10.00",
-        #         "stop_price": null,
-        #         "distance": null
-        #     }
-        #
-        # createOrder market type
-        #
-        #     {
-        #         "order_id":"d6b60c01-8624-44f2-9e6c-9e8cd677ea5c",
-        #         "pair":"BTC_USDC",
-        #         "side":"BUY",
-        #         "amount":"0.00200",
-        #         "notional":"50",
-        #         "fill_or_kill":false,
-        #         "all_or_none":false,
-        #         "order_type":"MARKET",
-        #         "status":"OPEN",
-        #         "created_at":1601730306,
-        #         "filled":"0.00000",
-        #         "fill_price":10593.99,
-        #         "fee":0.0,
-        #         "fills":[
-        #             {
-        #                 "pair":"BTC_USDC",
-        #                 "exchanged":0.002,
-        #                 "match_price":10593.99,
-        #                 "maker_fee":0.0,
-        #                 "taker_fee":0.0,
-        #                 "timestamp":1601730306942
-        #             }
-        #         ],
-        #         "filled_at":"2020-10-03T13:05:06.942186Z",
-        #         "limit_price":"0.000000",
-        #         "stop_price":null,
-        #         "distance":null
-        #     }
-        #
-        return self.parse_order(response, market)
+        if lowercase_type == 'limited':
+            request['unit_price'] = self.parse_number(price)
+        response = self.privatePostMarketCreateOrder(params)
+        """
+        {
+          "message": null,
+          "data": {
+            "code": "string"
+          }
+        }
+        """
+        return response["data"]["code"]
 
     def cancel_order(self, id, symbol=None, params={}):
-        if symbol is None:
-            raise ArgumentsRequired(self.id + ' cancelOrder() requires a symbol argument')
-        self.load_markets()
-        market = self.market(symbol)
         request = {
-            'pair': market['id'],
-            'order_id': id,
+            'code': id
         }
-        response = self.privatePostOrderPairOrderIdCancel(self.extend(request, params))
-        #
-        #     {
-        #         "order_id": "286e560e-b8a2-464b-8b84-15a7e2a67eab",
-        #         "pair": "BTC_ARS",
-        #         "side": "SELL",
-        #         "amount": "0.00100",
-        #         "notional": null,
-        #         "fill_or_kill": False,
-        #         "all_or_none": False,
-        #         "order_type": "LIMIT",
-        #         "status": "CANC",
-        #         "created_at": 1575472707,
-        #         "filled": "0.00000",
-        #         "limit_price": "681000.00",
-        #         "stop_price": null,
-        #         "distance": null
-        #     }
-        #
-        return self.parse_order(response, market)
+        response = self.privateDeleteMarketUserOrders(params)
+        """
+        {
+          "message": null,
+          "data": {
+            "code": "string",
+            "create_date": "string",
+            "executed_amount": 0,
+            "pair": "BRLBTC",
+            "remaining_amount": 0,
+            "remaining_price": 0,
+            "requested_amount": 0,
+            "status": "string",
+            "subtype": "string",
+            "total_price": 0,
+            "type": "string",
+            "unit_price": 0,
+            "update_date": "string"
+          }
+        }
+        """
+        return self.parse_order(response["data"])
 
     def fetch_order(self, id, symbol=None, params={}):
         if symbol is None:
             raise ArgumentsRequired(self.id + ' fetchOrder() requires a symbol argument')
-        self.load_markets()
-        market = self.market(symbol)
         request = {
-            'pair': market['id'],
-            'order_id': id,
+            'code': id
         }
-        response = self.privateGetOrderPairOrderId(self.extend(request, params))
-        #
-        #     {
-        #         "order_id": "0b4ff48e-cfd6-42db-8d8c-3b536da447af",
-        #         "pair": "BTC_ARS",
-        #         "side": "BUY",
-        #         "amount": "0.00100",
-        #         "notional": null,
-        #         "fill_or_kill": False,
-        #         "all_or_none": False,
-        #         "order_type": "LIMIT",
-        #         "status": "OPEN",
-        #         "created_at": 1575472944,
-        #         "filled": "0.00000",
-        #         "limit_price": "661000.00",
-        #         "stop_price": null,
-        #         "distance": null
-        #     }
-        #
-        return self.parse_order(response, market)
+        response = self.privateGetMarketUserOrdersCode(self.extend(request, params))
+        """
+        {
+          "message": null,
+          "data": {
+            "code": "SkvtQoOZf",
+            "type": "buy",
+            "subtype": "limited",
+            "requested_amount": 0.02347418,
+            "remaining_amount": 0,
+            "unit_price": 42600,
+            "status": "executed_completely",
+            "create_date": "2017-12-08T23:42:54.960Z",
+            "update_date": "2017-12-13T21:48:48.817Z",
+            "pair": "BRLBTC",
+            "total_price": 1000,
+            "executed_amount": 0.02347418,
+            "remaining_price": 0,
+            "transactions": [
+              {
+                "amount": 0.2,
+                "create_date": "2020-02-21 20:24:43.433",
+                "total_price": 1000,
+                "unit_price": 5000
+              },
+              {
+                "amount": 0.2,
+                "create_date": "2020-02-21 20:49:37.450",
+                "total_price": 1000,
+                "unit_price": 5000
+              }
+            ]
+          }
+        }
+        """
+        return self.parse_order(response)
 
     def fetch_orders(self, symbol=None, since=None, limit=None, params={}):
         if symbol is None:
             raise ArgumentsRequired(self.id + ' fetchOrders() requires a symbol argument')
-        self.load_markets()
-        market = self.market(symbol)
         request = {
             'pair': market['id'],
-            # 'status': 'OPEN,PART,CLOS,CANC,COMP',
-            # 'offset': 0,
-            # 'limit': limit,
+            # 'status': 'executed_partially,waiting,pending_creation,executed_completely,canceled' ,
+            # 'page_size': 200,
+            # 'current_page': 1,
         }
         if limit is not None:
-            request['offset'] = limit
-        response = self.privateGetOrderPair(self.extend(request, params))
-        #
-        #     {
-        #         "next": "https://api.exchange.ripio.com/api/v1/order/BTC_ARS/?limit=20&offset=20&page=1&page_size=25&status=OPEN%2CPART",
-        #         "previous": null,
-        #         "results": {
-        #             "data": [
-        #                 {
-        #                     "order_id": "ca74280b-6966-4b73-a720-68709078922b",
-        #                     "pair": "BTC_ARS",
-        #                     "side": "SELL",
-        #                     "amount": "0.00100",
-        #                     "notional": null,
-        #                     "fill_or_kill": False,
-        #                     "all_or_none": False,
-        #                     "order_type": "LIMIT",
-        #                     "status": "OPEN",
-        #                     "created_at": 1578340134,
-        #                     "filled": "0.00000",
-        #                     "limit_price": "665000.00",
-        #                     "stop_price": null,
-        #                     "distance": null
-        #                 },
-        #             ]
-        #         }
-        #     }
-        #
+            request['current_page'] = limit
+        response = self.privateGetMarketUserOrdersList(params)
+        """
+        {
+          "message": null,
+          "data": {
+            "orders": [
+              {
+                "code": "SkvtQoOZf",
+                "type": "buy",
+                "subtype": "limited",
+                "requested_amount": 0.02347418,
+                "remaining_amount": 0,
+                "unit_price": 42600,
+                "status": "executed_completely",
+                "create_date": "2017-12-08T23:42:54.960Z",
+                "update_date": "2017-12-13T21:48:48.817Z",
+                "pair": "BRLBTC",
+                "total_price": 1000,
+                "executed_amount": 0.02347418,
+                "remaining_price": 0
+              },
+              {
+                "code": "SyYpGa8p_",
+                "type": "buy",
+                "subtype": "market",
+                "requested_amount": 0.00033518,
+                "remaining_amount": 0,
+                "unit_price": 16352.12,
+                "status": "executed_completely",
+                "create_date": "2017-10-20T00:26:40.403Z",
+                "update_date": "2017-10-20T00:26:40.467Z",
+                "pair": "BRLBTC",
+                "total_price": 5.48090358,
+                "executed_amount": 0.00033518,
+                "remaining_price": 0
+              }
+            ],
+            "pagination": {
+              "total_pages": 1,
+              "current_page": 1,
+              "page_size": 100,
+              "registers_count": 21
+            }
+          }
+        }
+        """
         results = self.safe_value(response, 'results', {})
         data = self.safe_value(results, 'data', [])
         return self.parse_orders(data, market, since, limit)
 
     def fetch_open_orders(self, symbol=None, since=None, limit=None, params={}):
         request = {
-            'status': 'OPEN,PART',
+            'status': 'executed_partially,waiting,pending_creation'
         }
         return self.fetch_orders(symbol, since, limit, self.extend(request, params))
 
     def fetch_closed_orders(self, symbol=None, since=None, limit=None, params={}):
         request = {
-            'status': 'CLOS,CANC,COMP',
+            'status': 'executed_completely,canceled'
         }
         return self.fetch_orders(symbol, since, limit, self.extend(request, params))
 
     def parse_order_status(self, status):
         statuses = {
-            'OPEN': 'open',
-            'PART': 'open',
-            'CLOS': 'canceled',
-            'CANC': 'canceled',
-            'COMP': 'closed',
+            'executed_completely': 'executed completely',
+            'executed_partially': 'executed partially',
+            'waiting': 'waiting',
+            'canceled': 'canceled',
+            'pending_creation': 'pending creation',
         }
         return self.safe_string(statuses, status, status)
 
     def parse_order(self, order, market=None):
-        #
-        # createOrder, cancelOrder, fetchOpenOrders, fetchClosedOrders, fetchOrders, fetchOrder
-        #
-        #     {
-        #         "order_id": "286e560e-b8a2-464b-8b84-15a7e2a67eab",
-        #         "pair": "BTC_ARS",
-        #         "side": "SELL",
-        #         "amount": "0.00100",
-        #         "notional": null,
-        #         "fill_or_kill": False,
-        #         "all_or_none": False,
-        #         "order_type": "LIMIT",
-        #         "status": "CANC",
-        #         "created_at": 1575472707,
-        #         "filled": "0.00000",
-        #         "limit_price": "681000.00",
-        #         "stop_price": null,
-        #         "distance": null
-        #     }
-        #
-        #     {
-        #         "order_id":"d6b60c01-8624-44f2-9e6c-9e8cd677ea5c",
-        #         "pair":"BTC_USDC",
-        #         "side":"BUY",
-        #         "amount":"0.00200",
-        #         "notional":"50",
-        #         "fill_or_kill":false,
-        #         "all_or_none":false,
-        #         "order_type":"MARKET",
-        #         "status":"OPEN",
-        #         "created_at":1601730306,
-        #         "filled":"0.00000",
-        #         "fill_price":10593.99,
-        #         "fee":0.0,
-        #         "fills":[
-        #             {
-        #                 "pair":"BTC_USDC",
-        #                 "exchanged":0.002,
-        #                 "match_price":10593.99,
-        #                 "maker_fee":0.0,
-        #                 "taker_fee":0.0,
-        #                 "timestamp":1601730306942
-        #             }
-        #         ],
-        #         "filled_at":"2020-10-03T13:05:06.942186Z",
-        #         "limit_price":"0.000000",
-        #         "stop_price":null,
-        #         "distance":null
-        #     }
-        #
-        id = self.safe_string(order, 'order_id')
-        amount = self.safe_number(order, 'amount')
+        """
+        {
+            "code": "SkvtQoOZf",
+            "type": "buy",
+            "subtype": "limited",
+            "requested_amount": 0.02347418,
+            "remaining_amount": 0,
+            "unit_price": 42600,
+            "status": "executed_completely",
+            "create_date": "2017-12-08T23:42:54.960Z",
+            "update_date": "2017-12-13T21:48:48.817Z",
+            "pair": "BRLBTC",
+            "total_price": 1000,
+            "executed_amount": 0.02347418,
+            "remaining_price": 0
+        }
+        """
+        code = self.safe_string(order, 'code')
+        amount = self.safe_number(order, 'requested_amount')
         cost = self.safe_number(order, 'notional')
-        type = self.safe_string_lower(order, 'order_type')
-        priceField = 'fill_price' if (type == 'market') else 'limit_price'
-        price = self.safe_number(order, priceField)
-        side = self.safe_string_lower(order, 'side')
+        type = self.safe_string_lower(order, 'subtype')
+        price = self.safe_number(order, 'unit_price')
+        side = self.safe_string_lower(order, 'type')
         status = self.parse_order_status(self.safe_string(order, 'status'))
-        timestamp = self.safe_timestamp(order, 'created_at')
-        average = self.safe_value(order, 'fill_price')
-        filled = self.safe_number(order, 'filled')
+        timestamp = self.parse_date(
+            self.safe_string(order, 'create_date')
+        )
+        average = None
+        cost = None
+        filled = self.safe_number(order, 'executed_amount')
         remaining = None
-        fills = self.safe_value(order, 'fills')
-        trades = None
-        lastTradeTimestamp = None
-        if fills is not None:
-            numFills = len(fills)
-            if numFills > 0:
-                filled = 0
-                cost = 0
-                trades = self.parse_trades(fills, market, None, None, {
-                    'order': id,
-                    'side': side,
-                })
-                for i in range(0, len(trades)):
-                    trade = trades[i]
-                    filled = self.sum(trade['amount'], filled)
-                    cost = self.sum(trade['cost'], cost)
-                    lastTradeTimestamp = trade['timestamp']
-                if (average is None) and (filled > 0):
-                    average = cost / filled
-        if filled is not None:
-            if (cost is None) and (price is not None):
-                cost = price * filled
-            if amount is not None:
-                remaining = max(0, amount - filled)
-        marketId = self.safe_string(order, 'pair')
-        symbol = self.safe_symbol(marketId, market, '_')
-        stopPrice = self.safe_number(order, 'stop_price')
+        fills = None
+        trades = self.safe_value(order, 'transactions')
+        lastTradeTimestamp = self.parse_date(
+            self.safe_string(order, 'update_date')
+        )
+        remaining = self.safe_number(order, 'remaining_amount')
+        symbol = self.safe_string(order, 'pair')
         return {
             'id': id,
             'clientOrderId': None,
@@ -688,7 +568,7 @@ class bitcointrade(Exchange):
             'postOnly': None,
             'side': side,
             'price': price,
-            'stopPrice': stopPrice,
+            'stopPrice': None,
             'amount': amount,
             'cost': cost,
             'average': average,
@@ -699,44 +579,6 @@ class bitcointrade(Exchange):
             'trades': trades,
         }
 
-    def fetch_my_trades(self, symbol=None, since=None, limit=None, params={}):
-        if symbol is None:
-            raise ArgumentsRequired(self.id + ' fetchMyTrades() requires a symbol argument')
-        self.load_markets()
-        market = self.market(symbol)
-        request = {
-            'pair': market['id'],
-            # 'offset': 0,
-            # 'limit': limit,
-        }
-        if limit is not None:
-            request['limit'] = limit
-        response = self.privateGetTradePair(self.extend(request, params))
-        #
-        #     {
-        #         "next": "https://api.exchange.ripio.com/api/v1/trade/<pair>/?limit=20&offset=20",
-        #         "previous": null,
-        #         "results": {
-        #             "data": [
-        #                 {
-        #                     "created_at": 1578414028,
-        #                     "amount": "0.00100",
-        #                     "price": "665000.00",
-        #                     "side": "BUY",
-        #                     "taker_fee": "0",
-        #                     "taker_side": "BUY",
-        #                     "match_price": "66500000",
-        #                     "maker_fee": "0",
-        #                     "taker": 4892,
-        #                     "maker": 4889
-        #                 },
-        #             ]
-        #         }
-        #     }
-        #
-        results = self.safe_value(response, 'results', {})
-        data = self.safe_value(results, 'data', [])
-        return self.parse_trades(data, market, since, limit)
 
     def sign(self, path, api='public', method='GET', params={}, headers=None, body=None):
         request = '/' + self.version + '/' + self.implode_params(path, params)
