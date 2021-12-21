@@ -13,6 +13,7 @@ from ccxt.base.errors import InsufficientFunds
 from ccxt.base.errors import InvalidOrder
 from ccxt.base.errors import OrderNotFound
 from ccxt.base.errors import DDoSProtection
+from ccxt.base.errors import OnMaintenance
 from ccxt.base.decimal_to_precision import TICK_SIZE
 from ccxt.base.precise import Precise
 
@@ -35,7 +36,6 @@ class bitcointrade(Exchange):
                 'fetchBalance': True,
                 'fetchClosedOrders': True,
                 'fetchCurrencies': True,
-                'fetchMyTrades': True,
                 'fetchOpenOrders': True,
                 'fetchOrder': True,
                 'fetchOrderBook': True,
@@ -96,8 +96,17 @@ class bitcointrade(Exchange):
             },
             'exceptions': {
                 'exact': {
+                    'You did another transaction with the same amount in an interval lower than 10 (ten) minutes, it is not allowed in order to prevent mistakes. Try again in a few minutes': ExchangeError
                 },
                 'broad': {
+                    'Invalid order quantity': InvalidOrder,
+                    'Funds insufficient': InsufficientFunds,
+                    'Order already canceled': InvalidOrder,
+                    'Order already completely executed': OrderNotFillable,
+                    'No orders to cancel': OrderNotFound,
+                    'Minimum value not reached': ExchangeError,
+                    'Limit exceeded': DDoSProtection,
+                    'Too many requests': RateLimitExceeded,
                 },
             },
         })
@@ -601,28 +610,31 @@ class bitcointrade(Exchange):
         return {'url': url, 'method': method, 'body': body, 'headers': headers}
 
     def handle_errors(self, code, reason, url, method, headers, body, response, requestHeaders, requestBody):
+        feedback = self.id + ' ' + body
+        if code >= 400:
+            raise InvalidOrder(feedback)
+        if code >= 401:
+            raise PermissionDenied(feedback)
+        if code >= 402:
+            raise AuthenticationError(feedback)
+        if code >= 403:
+            raise PermissionDenied(feedback)
+        if code >= 404:
+            raise NullResponse(feedback)
+        if code >= 405:
+            raise ExchangeError(feedback)
+        if code == 429:
+            raise DDoSProtection(feedback)
+        if code >= 500:
+            raise ExchangeError(feedback)
+        if code >= 502:
+            raise NetworkError(feedback)
+        if code >= 503:
+            raise OnMaintenance(feedback)
         if response is None:
             return
-        #
-        #      {"detail":"Authentication credentials were not provided."}
-        #      {"status_code":400,"errors":{"pair":["Invalid pair FOOBAR"]},"message":"An error has occurred, please check the form."}
-        #      {"status_code":400,"errors":{"order_type":["Invalid order type. Valid options: ['MARKET', 'LIMIT']"]},"message":"An error has occurred, please check the form."}
-        #      {"status_code":400,"errors":{"non_field_errors":"Something unexpected ocurred!"},"message":"Seems like an unexpected error occurred. Please try again later or write us to support@ripio.com if the problem persists."}
-        #      {"status_code":400,"errors":{"pair":["Invalid/Disabled pair BTC_ARS"]},"message":"An error has occurred, please check the form."}
-        #
-        detail = self.safe_string(response, 'detail')
-        if detail is not None:
+        message = self.safe_string(response, 'message')
+        if message is not None:
             feedback = self.id + ' ' + body
-            # self.throw_exactly_matched_exception(self.exceptions['exact'], message, feedback)
-            self.throw_broadly_matched_exception(self.exceptions['broad'], detail, feedback)
-        errors = self.safe_value(response, 'errors')
-        if errors is not None:
-            feedback = self.id + ' ' + body
-            keys = list(errors.keys())
-            for i in range(0, len(keys)):
-                key = keys[i]
-                error = self.safe_value(errors, key, [])
-                message = self.safe_string(error, 0)
-                # self.throw_exactly_matched_exception(self.exceptions['exact'], message, feedback)
-                self.throw_broadly_matched_exception(self.exceptions['broad'], message, feedback)
-            raise ExchangeError(feedback)  # unknown message
+            self.throw_exactly_matched_exception(self.exceptions['exact'], message, feedback)
+            self.throw_broadly_matched_exception(self.exceptions['broad'], message, feedback)
