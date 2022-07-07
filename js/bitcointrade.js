@@ -14,7 +14,7 @@ module.exports = class bitcointrade extends Exchange {
         return this.deepExtend (super.describe (), {
             'id': 'bitcointrade',
             'name': 'Bitcointrade',
-            'countries': [ 'BR' ], // Argentina
+            'countries': [ 'BR' ],
             'rateLimit': 50,
             'version': 'v3',
             'pro': false,
