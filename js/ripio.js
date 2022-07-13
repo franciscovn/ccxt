@@ -20,12 +20,17 @@ module.exports = class ripio extends Exchange {
             'pro': false,
             // new metainfo interface
             'has': {
-                'cancelOrder': true,
                 'CORS': undefined,
+                'spot': true,
+                'margin': undefined,
+                'swap': undefined,
+                'future': undefined,
+                'option': undefined,
+                'cancelOrder': true,
                 'createOrder': true,
                 'fetchBalance': true,
                 'fetchClosedOrders': true,
-                'fetchCurrencies': true,
+                'fetchCurrencies': false,
                 'fetchOpenOrders': true,
                 'fetchOrder': true,
                 'fetchOrderBook': true,
@@ -41,7 +46,7 @@ module.exports = class ripio extends Exchange {
                 },
                 'www': 'https://trade.ripio.com',
                 'doc': [
-                    'https://apidocs.bitcointrade.com.br',
+                    'https://apidocs.ripiotrade.co',
                 ],
             },
             'api': {
@@ -222,10 +227,18 @@ module.exports = class ripio extends Exchange {
         return result;
     }
 
+    parseSymbol (symbol) {
+        const currencies = symbol.split ('/');
+        const quote = currencies[1];
+        const base = currencies[0];
+        return quote + base;
+    }
+
     async fetchTicker (symbol, params = {}) {
         await this.loadMarkets ();
+        const ripioSymbol = this.parseSymbol (symbol);
         const request = {
-            'pair': this.marketId (symbol),
+            'pair': this.marketId (ripioSymbol),
         };
         const response = await this.publicGetPairTicker (this.extend (request, params));
         // {
@@ -241,8 +254,8 @@ module.exports = class ripio extends Exchange {
         //     "date": "2017-10-20T00:00:00Z"
         //  }
         // }
-        const ticker = this.safeValue (response, 'ticker', {});
-        const timestamp = this.parseDate (this.safeString (response, 'date'));
+        const ticker = this.safeValue (response, 'data', {});
+        const timestamp = this.parseDate (this.safeString (ticker, 'date'));
         const last = this.safeNumber (ticker, 'last');
         return {
             'symbol': symbol,
@@ -270,43 +283,42 @@ module.exports = class ripio extends Exchange {
 
     async fetchOrderBook (symbol, limit = undefined, params = {}) {
         await this.loadMarkets ();
-        params = this.extend (params, { 'pair': this.marketId (symbol) });
-        const response = await this.privateGetMarket (params);
+        const ripioSymbol = this.parseSymbol (symbol);
+        params = this.extend (params, { 'pair': this.marketId (ripioSymbol) });
+        const response = await this.publicGetPairOrders (params);
         // {
-        //   "data": {
-        //     "buying": [
-        //       {
-        //         "unit_price": 54049,
-        //         "code": "BypTSfJSz",
-        //         "user_code": "H1u6_cuGM",
-        //         "amount": 0.02055746
-        //       }
-        //     ],
-        //     "selling": [
-        //       {
-        //         "unit_price": 1923847,
-        //         "code": "IasDflk",
-        //         "user_code": "H1u6_cuGM",
-        //         "amount": 0.1283746
-        //       }
-        //     ],
-        //     ...
-        //   }
+        //     "data": {
+        //         "asks": [
+        //             {
+        //                 "amount": 197,
+        //                 "code": "qeM4ZCp1E",
+        //                 "unit_price": 60
+        //             }
+        //         ],
+        //         "bids": [
+        //             {
+        //                 "amount": 20,
+        //                 "code": "DbqCd9e4_",
+        //                 "unit_price": 50
+        //             }
+        //         ]
+        //     },
+        //     "message": null
         // }
-        const orderbook = this.parseOrderBook (response['data'], symbol, undefined, 'buying', 'selling', 'unit_price', 'amount');
+        const orderbook = this.parseOrderBook (response['data'], symbol, undefined, 'bids', 'asks', 'unit_price', 'amount');
         return orderbook;
     }
 
     parseTrade (trade, market = undefined) {
-        const timestamp = this.parseDate (this.safeString (trade, 'timestamp'));
+        const timestamp = this.parseDate (this.safeString (trade, 'date'));
         const id = timestamp;
         const side = this.safeStringLower (trade, 'type');
-        const takerOrMaker = 'taker';
-        const priceString = this.safeNumber (trade, 'unit_price');
-        const amountString = this.safeNumber (trade, 'amount');
+        const takerOrMaker = undefined;
+        const priceString = this.safeString (trade, 'unit_price');
+        const amountString = this.safeString (trade, 'amount');
         const price = this.parseNumber (priceString);
         const amount = this.parseNumber (amountString);
-        const cost = this.parseNumber (Precise.mul (priceString, amountString));
+        const cost = this.parseNumber (Precise.stringMul (priceString, amountString));
         const fee = undefined;
         return {
             'id': id,
@@ -325,8 +337,8 @@ module.exports = class ripio extends Exchange {
 
     async fetchTrades (symbol, since = undefined, limit = undefined, params = {}) {
         await this.loadMarkets ();
-        const market = this.market (symbol);
-        params = this.extend (params, { 'pair': this.marketId (symbol) });
+        const ripioSymbol = this.parseSymbol (symbol);
+        params = this.extend (params, { 'pair': this.marketId (ripioSymbol) });
         const response = await this.publicGetPairTrades (params);
         // {
         //   "message": null,
@@ -365,7 +377,9 @@ module.exports = class ripio extends Exchange {
         //     }
         //   }
         // }
-        return this.parseTrades (response, market, since, limit);
+        const data = this.safeValue (response, 'data');
+        const trades = this.safeValue (data, 'trades');
+        return this.parseTrades (trades, undefined, since, limit);
     }
 
     async fetchBalance (params = {}) {
@@ -395,29 +409,32 @@ module.exports = class ripio extends Exchange {
         //   ]
         // }
         const result = { 'info': response };
-        for (let i = 0; i < response.length; i++) {
-            const balance = response[i];
-            const currencyId = this.safeString (balance, 'symbol');
+        const data = this.safeValue (response, 'data');
+        for (let i = 0; i < data.length; i++) {
+            const balance = data[i];
+            const currencyId = this.safeString (balance, 'currency_code');
             const code = this.safeCurrencyCode (currencyId);
             const account = this.account ();
-            account['free'] = this.safeString (balance, 'available_amount');
-            account['used'] = this.safeString (balance, 'locked_amount');
+            account['free'] = this.safeNumber (balance, 'available_amount');
+            account['used'] = this.safeNumber (balance, 'locked_amount');
+            account['total'] = this.safeNumber (balance, 'available_amount') + this.safeNumber (balance, 'locked_amount');
             result[code] = account;
         }
-        return this.parseBalance (result);
+        return this.safeBalance (result);
     }
 
     async createOrder (symbol, type, side, amount, price = undefined, params = {}) {
         await this.loadMarkets ();
+        const ripioSymbol = this.parseSymbol (symbol);
         const uppercaseType = type.toUpperCase ();
         const uppercaseSide = side.toUpperCase ();
         const request = {
-            'pair': this.marketId (symbol),
-            'order_type': uppercaseType, // LIMIT, MARKET
-            'side': uppercaseSide, // BUY or SELL
+            'pair': this.marketId (ripioSymbol),
+            'subtype': uppercaseType, // LIMIT, MARKET
+            'type': uppercaseSide, // BUY or SELL
             'amount': this.parseNumber (amount),
         };
-        if (uppercaseType === 'limited') {
+        if (uppercaseType === 'LIMITED') {
             request['unit_price'] = this.parseNumber (price);
         }
         const response = await this.privatePostMarketCreateOrder (this.extend (request, params));
@@ -432,7 +449,8 @@ module.exports = class ripio extends Exchange {
 
     async cancelOrder (id, symbol = undefined, params = {}) {
         await this.loadMarkets ();
-        const market = this.market (symbol);
+        const ripioSymbol = this.parseSymbol (symbol);
+        const market = this.market (ripioSymbol);
         const request = { 'code': id };
         const response = await this.privateDeleteMarketUserOrders (this.extend (request, params));
         // {
@@ -465,54 +483,60 @@ module.exports = class ripio extends Exchange {
         const request = { 'code': id };
         const response = await this.privateGetMarketUserOrdersCode (this.extend (request, params));
         // {
-        //   "message": null,
-        //   "data": {
-        //     "code": "SkvtQoOZf",
-        //     "type": "buy",
-        //     "subtype": "limited",
-        //     "requested_amount": 0.02347418,
-        //     "remaining_amount": 0,
-        //     "unit_price": 42600,
-        //     "status": "executed_completely",
-        //     "create_date": "2017-12-08T23:42:54.960Z",
-        //     "update_date": "2017-12-13T21:48:48.817Z",
-        //     "pair": "BRLBTC",
-        //     "total_price": 1000,
-        //     "executed_amount": 0.02347418,
-        //     "remaining_price": 0,
-        //     "transactions": [
-        //       {
-        //         "amount": 0.2,
-        //         "create_date": "2020-02-21 20:24:43.433",
-        //         "total_price": 1000,
-        //         "unit_price": 5000
-        //       },
-        //       {
-        //         "amount": 0.2,
-        //         "create_date": "2020-02-21 20:49:37.450",
-        //         "total_price": 1000,
-        //         "unit_price": 5000
-        //       }
-        //     ]
-        //   }
+        //     "data": {
+        //         "code": "ZAeXh5ief",
+        //         "create_date": "2022-07-11T13:47:17.590Z",
+        //         "executed_amount": 30.09664345,
+        //         "pair": "BRLCELO",
+        //         "remaining_amount": 0,
+        //         "remaining_price": 0,
+        //         "requested_amount": 30.09664345,
+        //         "status": "executed_completely",
+        //         "subtype": "market",
+        //         "total_price": 499.94,
+        //         "type": "buy",
+        //         "unit_price": 16.61115469,
+        //         "update_date": "2022-07-11T13:47:17.610Z",
+        //         "transactions": [
+        //             {
+        //                 "amount": 30,
+        //                 "create_date": "2022-07-11T13:47:17.603Z",
+        //                 "total_price": 210,
+        //                 "unit_price": 7
+        //             },
+        //             {
+        //                 "amount": 0.09664345,
+        //                 "create_date": "2022-07-11T13:47:17.607Z",
+        //                 "total_price": 289.94,
+        //                 "unit_price": 3000.1
+        //             }
+        //         ]
+        //     },
+        //     "message": null
         // }
-        return this.parseOrder (response, market);
+        const data = this.safeValue (response, 'data');
+        return this.parseOrder (data, market);
     }
 
     async fetchOrders (symbol = undefined, since = undefined, limit = undefined, params = {}) {
         if (symbol === undefined) {
             throw new ArgumentsRequired (this.id + ' fetchOrders() requires a symbol argument');
         }
+        const ripioSymbol = this.parseSymbol (symbol);
         await this.loadMarkets ();
-        const market = this.market (symbol);
         const request = {
-            'pair': this.marketId (symbol),
-            // 'status': 'executed_partially,waiting,pending_creation,executed_completely,canceled' ,
-            // 'page_size': 200,
-            // 'current_page': 1,
+            'pair': this.marketId (ripioSymbol),
         };
         if (limit !== undefined) {
-            request['current_page'] = limit;
+            request['page_size'] = limit;
+        }
+        const side = this.safeString (params, 'side', undefined);
+        if (side) {
+            request['type'] = side;
+        }
+        const status = this.safeString (params, 'status', undefined);
+        if (status) {
+            request['status'] = status;
         }
         const response = await this.privateGetMarketUserOrdersList (this.extend (request, params));
         // {
@@ -558,30 +582,30 @@ module.exports = class ripio extends Exchange {
         //     }
         //   }
         // }
-        const results = this.safeValue (response, 'results', {});
-        const data = this.safeValue (results, 'data', []);
-        return this.parseOrders (data, market, since, limit);
+        const data = this.safeValue (response, 'data', {});
+        const orders = this.safeValue (data, 'orders', []);
+        return this.parseOrders (orders, undefined, since, limit);
     }
 
     async fetchOpenOrders (symbol = undefined, since = undefined, limit = undefined, params = {}) {
         const request = {
-            'status': 'executed_partially,waiting,pending_creation',
+            'status': [ 'executed_partially', 'waiting' ],
         };
         return await this.fetchOrders (symbol, since, limit, this.extend (request, params));
     }
 
     async fetchClosedOrders (symbol = undefined, since = undefined, limit = undefined, params = {}) {
         const request = {
-            'status': 'executed_completely,canceled',
+            'status': [ 'executed_completely', 'canceled' ],
         };
         return await this.fetchOrders (symbol, since, limit, this.extend (request, params));
     }
 
     parseOrderStatus (status) {
         const statuses = {
-            'executed_completely': 'executed completely',
-            'executed_partially': 'executed partially',
-            'waiting': 'waiting',
+            'executed_completely': 'closed',
+            'executed_partially': 'open',
+            'waiting': 'open',
             'canceled': 'canceled',
             'pending_creation': 'pending creation',
         };
@@ -606,18 +630,18 @@ module.exports = class ripio extends Exchange {
         // }
         const code = this.safeString (order, 'code');
         const amount = this.safeNumber (order, 'requested_amount');
-        const cost = undefined;
         const type = this.safeStringLower (order, 'subtype');
         const price = this.safeNumber (order, 'unit_price');
         const side = this.safeStringLower (order, 'type');
         const status = this.parseOrderStatus (this.safeString (order, 'status'));
-        const timestamp = this.parseDate (this.safeString (order, 'created_at'));
+        const timestamp = this.parseDate (this.safeString (order, 'create_date'));
         const average = undefined;
         const filled = this.safeNumber (order, 'executed_amount');
+        const cost = this.parseNumber (Precise.stringMul (this.safeString (order, 'unit_price'), this.safeString (order, 'executed_amount')));
         const trades = undefined;
         const lastTradeTimestamp = this.parseDate (this.safeString (order, 'update_date'));
         const remaining = this.safeNumber (order, 'remaining_amount');
-        const symbol = this.safeSymbol (order, 'pair');
+        const symbol = market;
         return {
             'id': code,
             'clientOrderId': undefined,
@@ -644,7 +668,7 @@ module.exports = class ripio extends Exchange {
     }
 
     sign (path, api = 'public', method = 'GET', params = {}, headers = undefined, body = undefined) {
-        const request = '/' + this.version + '/' + this.implodeParams (path, params);
+        const request = '/' + this.implodeParams (path, params);
         let url = this.urls['api'][api] + request;
         const query = this.omit (params, this.extractParams (path));
         if (api === 'public') {
@@ -653,7 +677,7 @@ module.exports = class ripio extends Exchange {
             }
         } else if (api === 'private') {
             this.checkRequiredCredentials ();
-            if (method === 'POST') {
+            if (method === 'POST' || method === 'DELETE') {
                 body = this.json (query);
             } else {
                 if (Object.keys (query).length) {
@@ -662,7 +686,7 @@ module.exports = class ripio extends Exchange {
             }
             headers = {
                 'Content-Type': 'application/json',
-                'Authorization': 'Bearer ' + this.apiKey,
+                'x-api-key': this.apiKey,
             };
         }
         return { 'url': url, 'method': method, 'body': body, 'headers': headers };
